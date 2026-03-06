@@ -1,9 +1,3 @@
-"""
-args_kwargs.py
-Demonstrates:
-- *args
-- **kwargs
-"""
 
 # Example 1: *args
 def add_all(*numbers):
