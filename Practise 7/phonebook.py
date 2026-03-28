@@ -59,22 +59,32 @@ def update_contact(old_name, new_name=None, new_phone=None):
     conn = get_connection()
     cur = conn.cursor()
 
+    fields = []
+    values = []
+
     if new_name:
-        cur.execute(
-            "UPDATE contacts SET first_name=%s WHERE first_name=%s",
-            (new_name, old_name)
-        )
-
+        fields.append("first_name=%s")
+        values.append(new_name)
     if new_phone:
-        cur.execute(
-            "UPDATE contacts SET phone=%s WHERE first_name=%s",
-            (new_phone, old_name)
-        )
+        fields.append("phone=%s")
+        values.append(new_phone)
 
+    if not fields:
+        cur.close()
+        conn.close()
+        return 0  # nothing to update
+
+    query = f"UPDATE contacts SET {', '.join(fields)} WHERE first_name=%s"
+    values.append(old_name)
+
+    cur.execute(query, values)
     conn.commit()
+
+    updated_rows = cur.rowcount
+
     cur.close()
     conn.close()
-
+    return updated_rows
 
 # DELETE
 def delete_contact(value):
