@@ -73,7 +73,7 @@ def bulk_insert_from_csv():
             invalid = cur.fetchone()[0]
             if invalid:
                 print("\n❌ Invalid records (skipped):")
-                for inv in json.loads(invalid):
+                for inv in invalid if isinstance(invalid, list) else json.loads(invalid):
                     print(f"  {inv}")
             else:
                 print("✅ All records inserted/updated successfully.")
