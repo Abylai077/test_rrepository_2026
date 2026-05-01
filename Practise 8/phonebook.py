@@ -50,35 +50,96 @@ def bulk_insert_from_csv():
     path = input("CSV file path (default: contacts.csv): ").strip()
     if not path:
         path = "contacts.csv"
+
+    # Check file existence
+    import os
+    if not os.path.exists(path):
+        print(f"File not found: {os.path.abspath(path)}")
+        return
+
     contacts = []
     try:
-        with open(path, 'r', encoding='utf-8') as f:
+        with open(path, 'r', encoding='utf-8-sig') as f:   # handles BOM
             reader = csv.DictReader(f)
+            print("CSV headers:", reader.fieldnames)
             for row in reader:
-                contacts.append({
-                    "first_name": row.get("first_name", ""),
-                    "phone": row.get("phone", "")
-                })
+                first = row.get("first_name", "").strip()
+                phone = row.get("phone", "").strip()
+                if first and phone:   # skip empty rows
+                    contacts.append({"first_name": first, "phone": phone})
+        print(f"Loaded {len(contacts)} valid records")
     except Exception as e:
-        print(f"Error reading CSV: {e}")
+        print(f"CSV read error: {e}")
+        import traceback
+        traceback.print_exc()
         return
+
     if not contacts:
-        print("No data found.")
+        print("No valid data (need 'first_name' and 'phone' columns with values).")
         return
 
-    contacts_json = json.dumps(contacts)
-    with get_connection() as conn:
-        with conn.cursor() as cur:
-            cur.callproc('bulk_insert_contacts', (contacts_json,))
-            invalid = cur.fetchone()[0]
-            if invalid:
-                print("\n❌ Invalid records (skipped):")
-                for inv in invalid if isinstance(invalid, list) else json.loads(invalid):
-                    print(f"  {inv}")
-            else:
-                print("✅ All records inserted/updated successfully.")
-        conn.commit()
-
+    contacts_json = json.dumps(contacts, ensure_ascii=False)
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                # Important: explicit cast to JSONB for both IN and OUT parameters
+                cur.execute(
+                    "CALL bulk_insert_contacts(%s::jsonb, NULL::jsonb);",
+                    (contacts_json,)
+                )
+                conn.commit()
+                # Fetch the OUT parameter (invalid_records)
+                result = cur.fetchone()
+                if result and result[0]:
+                    invalid_raw = result[0]
+                    print("\n❌ Invalid records (skipped):")
+                    try:
+                        # psycopg2 returns JSONB as Python dict/list directly
+                        invalid_list = invalid_raw if isinstance(invalid_raw, (list, dict)) else json.loads(invalid_raw)
+                        # Ensure it's a list
+                        if isinstance(invalid_list, dict):
+                            invalid_list = [invalid_list]
+                        for rec in invalid_list:
+                            print(f"  {rec}")
+                    except Exception as e:
+                        print(f"Could not parse invalid data: {e}")
+                        print("Raw:", invalid_raw)
+                else:
+                    print("✅ All records inserted/updated successfully.")
+    except psycopg2.errors.UndefinedFunction as e:
+        print("\n❌ Database error: The procedure 'bulk_insert_contacts' is missing.")
+        print("Please run the following SQL in your database first:")
+        print("""
+        CREATE OR REPLACE PROCEDURE bulk_insert_contacts(
+            IN contacts_data JSONB,
+            OUT invalid_records JSONB
+        ) LANGUAGE plpgsql AS $$
+        DECLARE
+            rec RECORD;
+            invalid_list JSONB := '[]'::JSONB;
+            phone_valid BOOLEAN;
+        BEGIN
+            FOR rec IN SELECT * FROM jsonb_to_recordset(contacts_data) AS x(first_name TEXT, phone TEXT)
+            LOOP
+                phone_valid := (rec.phone ~ '^[0-9+\\-\\\\(\\\\)\\s]+$' AND LENGTH(rec.phone) >= 5);
+                IF (rec.first_name IS NULL OR rec.first_name = '') OR NOT phone_valid THEN
+                    invalid_list := invalid_list || jsonb_build_object(
+                        'first_name', rec.first_name,
+                        'phone', rec.phone,
+                        'error', CASE WHEN rec.first_name IS NULL OR rec.first_name = '' THEN 'Missing first name' ELSE 'Invalid phone format' END
+                    );
+                ELSE
+                    CALL upsert_contact(rec.first_name, rec.phone);
+                END IF;
+            END LOOP;
+            invalid_records := invalid_list;
+        END;
+        $$;
+        """)
+    except Exception as e:
+        print(f"Database error: {e}")
+        import traceback
+        traceback.print_exc()
 def paginated_view():
     """Call get_contacts_page function with user input."""
     try:

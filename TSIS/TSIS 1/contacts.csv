@@ -1,0 +1,4 @@
+first_name,email,birthday,group,phone_type,phone
+Alice,alice@example.com,1985-05-10,Work,mobile,555111
+Bob,bob@gmail.com,1992-08-22,Other,home,555222
+Charlie,charlie@yahoo.com,1978-12-01,Family,mobile,555333
